@@ -24,6 +24,41 @@ class ModelArgs:
     device: str = None
 
 
+def precompute_theta_pos_frequencies(head_dim: int, seq_len: int, device: str, theta: float = 10000.0):
+    # implementation is from the paper as embedding must be even
+    assert head_dim % 2 == 0, "head_dum must be divisible by 2"
+    # Build the theta params
+    # According to the formula theta_i = 10000 ^ (-2(-i-1)/dim) for i = [1,2...dim/2]
+    # Shape: (Head_dim / 2)
+    theta_numerator = torch.arange(0, head_dim, 2).float()
+    # Shape: (Head_dim / 2)
+    theta = 1.0 / (theta ** (theta_numerator / head_dim)).to(device)
+    # Construct the positions (the "m" parameter)
+    # Shape: (seq_len)
+    m = torch.arange(seq_len, device=device)
+    # Multiply each theta by each position using the outer product
+    # Shape: (seq_len) outer_product * (Head_dum / 2) -> (Seq_len, Head_dim / 2)
+    freqs = torch.out(m, theta).float()
+    # Compute complex numbers in the polar form c = R * exp(i * m * theta), where R = 1 as follows:
+    # (Seq_Len, Head_dim / 2) -> (Seq_Len, Head_dim /2)
+    freqs_complex = torch.polar(torch.ones_like(freqs), freqs)
+    return freqs_complex
+
+
+def apply_rotary_embeddings(x: torch.Tensor, freqs_complex: torch.Tensor, device: str):
+    # (B, Seq_Len, H, Head_dim) -> (B, Seq_Len, H, Head_dim / 2, 2)
+    x_complex = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
+    # (Seq_Len, Head_dim / 2) -> (1, Seq_Len, 1, Head_dim / 2)
+    freqs_complex = freqs_complex.unsqueeze(0).unsqueeze(2)
+    # (B, Seq_Len, H, Head_dim / 2) * (1, Seq_Len, 1, Head_dim / 2) = (B, Seq_Len, H, Head_dim /2)
+    x_rotated = x_complex * freqs_complex
+    # (B, Seq_Len, H, Head_dim / 2) -> (B, Seq_Len, H, Head_dim/2, 2)
+    x_out = torch.view_as_real(x_rotated)
+    # (B, Seq_Len, H, Head_dim/2, 2) -> (B, Seq_Len, H, Head_dim)
+    x_out = x_out.reshape(*x.shape)
+    return x_out.type_as(x).to(device)
+
+
 class Transformer(nn.module):
 
     def __init__(self, args: ModelArgs) -> None:
