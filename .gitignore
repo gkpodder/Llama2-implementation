@@ -4,3 +4,4 @@ tokenizer_checklist.chk
 LICENSE
 USE_POLICY.md
 /llama-2-7b
+/__pycache__
